@@ -1,4 +1,4 @@
-package me.ghsong.onechat
+package me.ghsong.onechat.main
 
 /**
  * 채팅 메시지 데이터 클래스

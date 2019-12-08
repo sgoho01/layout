@@ -9,6 +9,7 @@ import android.widget.Button
 import android.widget.TextView
 import me.ghsong.onechat.BuildConfig
 import me.ghsong.onechat.R
+import me.ghsong.onechat.main.MainActivity
 
 class LoginActivity : AppCompatActivity() {
 
@@ -35,6 +36,11 @@ class LoginActivity : AppCompatActivity() {
             var startWebIntent = Intent(Intent.ACTION_VIEW)
             startWebIntent.data = Uri.parse("https://www.kmong.com")
             startActivity(startWebIntent)
+
+            /*// 로그인 액티비티 -> 메인 액티비티를 실행한다.
+            var startMainActivityIntent = Intent(this@LoginActivity, MainActivity::class.java)
+            startActivity(startMainActivityIntent)*/
+
         }
 
         guestLoginButton.setOnClickListener(object: View.OnClickListener{
