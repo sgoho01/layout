@@ -48,7 +48,8 @@
                 android:id="@+id/btnSend"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="전송"/>
+                android:background="@drawable/selector_button"
+                android:text="전송" />
         </LinearLayout>
     </androidx.constraintlayout.widget.ConstraintLayout>
 

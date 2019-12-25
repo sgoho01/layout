@@ -23,6 +23,7 @@ class MainChatAdapter(var chatItems: ArrayList<ChatItem>): RecyclerView.Adapter<
 
     override fun onBindViewHolder(holder: ChatViewHolder, position: Int) {
         holder.binding?.tvMessage?.text = chatItems[position].message
+        holder.binding?.tvEmail?.text = chatItems[position].email
     }
 
     /**

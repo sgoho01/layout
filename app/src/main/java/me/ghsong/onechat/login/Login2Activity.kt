@@ -14,8 +14,12 @@ import com.google.android.gms.auth.api.signin.GoogleSignInOptions
 import com.google.android.gms.common.api.ApiException
 import com.google.android.material.snackbar.Snackbar
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.GoogleAuthProvider
+import com.google.firebase.database.FirebaseDatabase
+import com.google.firebase.iid.FirebaseInstanceId
 import me.ghsong.onechat.BuildConfig
+import me.ghsong.onechat.ChatApplication
 import me.ghsong.onechat.R
 import me.ghsong.onechat.SharedPreferencesUtil
 import me.ghsong.onechat.databinding.ActivityLogin2Binding
@@ -23,16 +27,14 @@ import me.ghsong.onechat.main.MainActivity
 
 class Login2Activity : AppCompatActivity() {
     lateinit var binding: ActivityLogin2Binding
-    private lateinit var auth: FirebaseAuth
+
     lateinit var googleSignInClient: GoogleSignInClient
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = DataBindingUtil.setContentView(this, R.layout.activity_login2)
 
-        // 파이어베이스 인증
-        // Initialize Firebase Auth
-        auth = FirebaseAuth.getInstance()
+
 
         // Configure Google Sign In
         val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
@@ -80,7 +82,7 @@ class Login2Activity : AppCompatActivity() {
     public override fun onStart() {
         super.onStart()
         // Check if user is signed in (non-null) and update UI accordingly.
-        val currentUser = auth.currentUser
+        val currentUser = (application as ChatApplication).auth.currentUser
 
         //updateUI(currentUser)
     }
@@ -111,21 +113,32 @@ class Login2Activity : AppCompatActivity() {
     private fun firebaseAuthWithGoogle(acct: GoogleSignInAccount) {
         Log.d(TAG, "firebaseAuthWithGoogle:" + acct.id!!)
 
+        // 진행상태를 보여준다.
+        binding.clProgress.visibility = View.VISIBLE
+
         val credential = GoogleAuthProvider.getCredential(acct.idToken, null)
-        auth.signInWithCredential(credential)
+        (application as ChatApplication).auth.signInWithCredential(credential)
             .addOnCompleteListener(this) { task ->
+
+                // 진행상태를 가린다.
+                binding.clProgress.visibility = View.GONE
+
                 if (task.isSuccessful) {
                     // 성공
+
+                    //토큰 정보를 저장한다.
+                    addPushTotken((application as ChatApplication).user!!)
+
                     // Sign in success, update UI with the signed-in user's information
                     Log.d(TAG, "signInWithCredential:success")
-                    val user = auth.currentUser
+                    (application as ChatApplication).user = (application as ChatApplication).auth.currentUser
                     //updateUI(user)
 
                     // 로그인을 저장한다.
                     SharedPreferencesUtil.putIsLogin(this@Login2Activity, true)
 
                     // 결과를 설정한다.
-                    setResult(Activity.RESULT_OK)
+                    setResult(RESULT_OK)
                     finish()
                 } else {
                     // 실패
@@ -137,6 +150,27 @@ class Login2Activity : AppCompatActivity() {
 
                 // ...
             }
+    }
+
+    /**
+     * 파이어베이스 데이터베이스에 푸시토큰을 등록한다.
+     */
+    private fun addPushTotken(firebaseUser: FirebaseUser) {
+        FirebaseInstanceId.getInstance().instanceId.addOnCompleteListener{
+            if(it.isSuccessful) {
+                // 푸시 토큰을 저장한다.
+                var token = it.result!!.token
+                var uid = firebaseUser.uid
+                var email = firebaseUser.email!!
+
+                var userInfo = HashMap<String, String>()
+                userInfo["email"] = email
+                userInfo["fcmToken"] = token
+
+                FirebaseDatabase.getInstance().getReference("push").child(uid).setValue(userInfo)
+
+            }
+        }
     }
 
     companion object {

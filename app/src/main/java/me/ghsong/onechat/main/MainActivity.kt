@@ -1,6 +1,7 @@
 package me.ghsong.onechat.main
 
 import android.app.Activity
+import android.app.Notification
 import android.content.DialogInterface
 import android.content.Intent
 import android.os.Bundle
@@ -12,13 +13,19 @@ import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.databinding.DataBindingUtil
+import androidx.recyclerview.widget.DividerItemDecoration
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.google.android.material.snackbar.Snackbar
-import me.ghsong.onechat.ChatDatabaseHelper
+import com.google.firebase.database.*
+import com.google.gson.Gson
+import me.ghsong.onechat.*
 import me.ghsong.onechat.R
-import me.ghsong.onechat.SharedPreferencesUtil
 import me.ghsong.onechat.databinding.ActivityMainBinding
 import me.ghsong.onechat.login.Login2Activity
+import okhttp3.*
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
+import java.io.IOException
 
 class MainActivity : AppCompatActivity() {
 
@@ -27,19 +34,65 @@ class MainActivity : AppCompatActivity() {
     private var chatItems = ArrayList<ChatItem>()
     private lateinit var adapter: MainChatAdapter
 
+    private lateinit var chatRef: DatabaseReference
+
+    // 로그인, 로그아웃 메뉴
+    private var signMenu: MenuItem? = null
+
+    // 푸시 토큰 저장 변수
+    private var tokens = ArrayList<String>()
+
+    /**
+     * 푸시 토큰 정보를 설정한다,
+     */
+    private fun setAllToken() {
+        FirebaseDatabase.getInstance().getReference("push")
+            .addValueEventListener(object : ValueEventListener {
+                override fun onCancelled(p0: DatabaseError) {
+
+                }
+
+                override fun onDataChange(p0: DataSnapshot) {
+                    // 등록된 정보를 초기화하고 새로운 정보로 변경한다.
+                    tokens.clear()
+
+                    for (child in p0.children) {
+                        var pushInfo = child.value as HashMap<String, String>
+
+                        var email = pushInfo["email"]
+                        var token = pushInfo["token"]!!
+
+                        // 본인을 제외한 모든 토큰 정보를 추가한다.
+                        var loginEmail = (application as ChatApplication).user!!.email
+                        if (!email.equals(loginEmail)) tokens.add(token)
+                    }
+                }
+            })
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // firebase database setting
+        val database = FirebaseDatabase.getInstance()
+        chatRef = database.getReference("oneChat")
+
         binding = DataBindingUtil.setContentView(
             this,
             R.layout.activity_main
         )
 
         isLogin = SharedPreferencesUtil.isLogin(this@MainActivity)
+        // 토큰을 설정한다,
+        if (isLogin) setAllToken()
 
         chatItems = getChatItemsInDatabase()
 
         adapter = MainChatAdapter(chatItems)
         var linearLayoutManager = LinearLayoutManager(this)
+        // 구분선 추가
+        var dividerItemDecoration = DividerItemDecoration(this, DividerItemDecoration.VERTICAL)
+        binding.rvChat.addItemDecoration(dividerItemDecoration)
         binding.rvChat.layoutManager = linearLayoutManager
         binding.rvChat.adapter = adapter
 
@@ -47,7 +100,7 @@ class MainActivity : AppCompatActivity() {
         binding.btnSend.isEnabled = false
 
         // Edit의 텍스트 변화를 감지 체크 추가
-        binding.etInput.addTextChangedListener(object: TextWatcher{
+        binding.etInput.addTextChangedListener(object : TextWatcher {
             override fun afterTextChanged(s: Editable?) {
 
             }
@@ -57,47 +110,60 @@ class MainActivity : AppCompatActivity() {
             }
 
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
-                binding.btnSend.isEnabled = ! s.isNullOrEmpty()
+                binding.btnSend.isEnabled = !s.isNullOrEmpty()
             }
         })
 
         binding.btnSend.setOnClickListener {
-            if(!isLogin){
+            if (!isLogin) {
                 // 게스트 상태로 로그인 요청
                 Snackbar.make(binding.root, "로그인이 필요합니다.", Snackbar.LENGTH_INDEFINITE)
                     .setAction("로그인") {
                         // 로그인 버튼을 누른경우 동작한다.
                         var startLoginActivityIntent = Intent(this, Login2Activity::class.java)
-                        startActivityForResult(startLoginActivityIntent, Login2Activity.REQUEST_CODE)
+                        startActivityForResult(
+                            startLoginActivityIntent,
+                            Login2Activity.REQUEST_CODE
+                        )
                     }
                     .show()
 
-            }else {
-
+            } else {
                 // 보내기를 눌렀을 경우 동작
-                var message = binding.etInput.text.toString()
 
-                var chatItem = ChatItem(message)
-                adapter.addItem(chatItem)
+                var message = binding.etInput.text.toString()
+                var email = (application as ChatApplication).user?.email ?: "unknown"
+
+                var chatItem = ChatItem(message, email)
+                //adapter.addItem(chatItem)
 
                 // db에 저장한다.
                 insertChatItemInDatabase(chatItem)
 
-                binding.etInput.setText("")
-                binding.rvChat.smoothScrollToPosition(chatItems.size - 1)
+                sendPush("테스트 제목", "테스트 내용")
+
+                // 초기화
+                binding.etInput.text.clear()
             }
         }
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        when(requestCode){
+        when (requestCode) {
             Login2Activity.REQUEST_CODE -> {
                 // 로그인이 정상적으로 되었는지 판단한다.
-                if(resultCode === Activity.RESULT_OK){
+                if (resultCode === Activity.RESULT_OK) {
                     Toast.makeText(this, "로그인을 성공했습니다.", Toast.LENGTH_SHORT).show()
-                }else{
+
+                    isLogin = true
+                    signMenu?.title = "로그아웃"
+                    setAllToken()
+                } else {
                     Toast.makeText(this, "게스트로 실행합니다.", Toast.LENGTH_SHORT).show()
+
+                    isLogin = false
+                    signMenu?.title = "로그인"
                 }
                 isLogin = SharedPreferencesUtil.isLogin(this@MainActivity)
             }
@@ -111,14 +177,13 @@ class MainActivity : AppCompatActivity() {
         var dialog = AlertDialog.Builder(this)
             .setTitle("확인")
             .setMessage("앱을 종료할까요?")
-            .setNegativeButton("취소", object: DialogInterface.OnClickListener{
+            .setNegativeButton("취소", object : DialogInterface.OnClickListener {
                 override fun onClick(dialog: DialogInterface?, which: Int) {
                     // 취소 버튼을 눌렀을 경우
                     dialog?.cancel()
                 }
             })
-            .setPositiveButton("종료"){
-                dialogInterface, i ->
+            .setPositiveButton("종료") { dialogInterface, i ->
                 finish()
             }
             .create()
@@ -138,9 +203,8 @@ class MainActivity : AppCompatActivity() {
      * 메뉴 정보를 변경
      */
     override fun onPrepareOptionsMenu(menu: Menu?): Boolean {
-        var menuSign = menu?.findItem(R.id.menu_sign)
-        menuSign?.title = if(isLogin) "로그아웃" else "로그인"
-        //menu?.findItem(R.id.menu_sign)?.title = if (isLogin) "로그아웃" else "로그인"
+        signMenu = menu?.findItem(R.id.menu_sign)
+        signMenu?.title = if (isLogin) "로그아웃" else "로그인"
 
         return super.onPrepareOptionsMenu(menu)
     }
@@ -168,19 +232,21 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * 데이터 베이스에 chatItem을 추가한다.
+     * 채팅을 데이터베이스에 추가한다.
      */
     fun insertChatItemInDatabase(chatItem: ChatItem) {
-        var db = ChatDatabaseHelper(this).writableDatabase
+        /*var db = ChatDatabaseHelper(this).writableDatabase
         db.execSQL("INSERT INTO ${ChatDatabaseHelper.TABLE_CHAT} (message) VALUES ('${chatItem.message}')")
-        db.close()
+        db.close()*/
+
+        chatRef.push().setValue(chatItem)
     }
 
     /**
-     * 데이터 베이스에서 모든 ChatItem을 리스트로 가져온다.
+     * 채팅을 데이터베이스에서 가져온다.
      */
-    fun getChatItemsInDatabase(): ArrayList<ChatItem>{
-        var db =ChatDatabaseHelper(this).readableDatabase
+    fun getChatItemsInDatabase(): ArrayList<ChatItem> {
+        /*var db = ChatDatabaseHelper(this).readableDatabase
         var cursor = db.rawQuery("SELECT * FROM ${ChatDatabaseHelper.TABLE_CHAT}", null)
 
         var chatItems = ArrayList<ChatItem>()
@@ -192,9 +258,94 @@ class MainActivity : AppCompatActivity() {
         }
 
         cursor.close()
-        db.close()
+        db.close()*/
+
+        var chatItems = ArrayList<ChatItem>()
+
+        chatRef.addChildEventListener(object : ChildEventListener {
+            override fun onCancelled(p0: DatabaseError) {
+
+            }
+
+            override fun onChildMoved(p0: DataSnapshot, p1: String?) {
+
+            }
+
+            override fun onChildChanged(p0: DataSnapshot, p1: String?) {
+
+            }
+
+            override fun onChildAdded(dataSnapshot: DataSnapshot, p1: String?) {
+                // 메시지를 리스트에 추가한다.
+                var chatItem = dataSnapshot.getValue(ChatItem::class.java)
+                if (chatItem != null) adapter.addItem(chatItem)
+                binding.rvChat.smoothScrollToPosition(chatItems.size - 1)
+            }
+
+            override fun onChildRemoved(p0: DataSnapshot) {
+
+            }
+        })
 
         return chatItems
+    }
+
+
+    /**
+     * 푸시를 전송한다.
+     */
+    fun sendPush(title: String, body: String) {
+        for (token in tokens) {
+            var notification = NotificationModel.Notification(title, body)
+            var body = Gson().toJson(
+                NotificationModel(
+                    notification,
+                    token
+                    //"fQb9Iw9tqJs:APA91bG9pVRRGq8c5Uk5BdhYxWI1Rxhpagp6MyzSxt3qDBJnhCKYejLYGqmoihkP1mBASW9jp6eBYAU4jcBnKer2UaY6F4QLos6V6RFuK8tcHpHgElrMaSh7COydopmhFJw89O_KGXNJ"
+                )
+            )
+
+            var mediaType = "application/json; charset=utf-8".toMediaType()
+            var requestBody = body.toRequestBody(mediaType)
+
+            var request = Request.Builder()
+                .header("Authorization", "key=AIzaSyCDls-t78ceororxwjgUcXpPKZLsaG5t3Q")
+                .header("Content-Type", "Application-json")
+                .url("https://fcm.googleapis.com/fcm/send")
+                .post(requestBody)
+                .build()
+
+            var okHttpClient = OkHttpClient()
+            okHttpClient.newCall(request).enqueue(object : Callback {
+                override fun onFailure(call: Call, e: IOException) {
+
+                }
+
+                override fun onResponse(call: Call, response: Response) {
+
+                }
+            })
+        }
+    }
+
+    override fun onStart() {
+        super.onStart()
+
+        if (isLogin) {
+            // 들어오기 푸시 전송
+            var email = (application as ChatApplication).user!!.email
+            sendPush("알림", "$email 접속 하셨습니다.")
+        }
+    }
+
+    override fun onStop() {
+        super.onStop()
+
+        if (isLogin) {
+            // 나가기 푸시 전송
+            var email = (application as ChatApplication).user!!.email
+            sendPush("알림", "$email 종료 하셨습니다.")
+        }
     }
 
 }
